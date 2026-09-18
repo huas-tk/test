@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <!-- viewport-fit=cover 适配刘海屏；user-scalable=no 禁止双击缩放 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>烟花特效</title>
+  <!--
+    ===== 如何在微信中打开 =====
+    微信无法直接运行本地 html 文件，需先部署为网页链接：
+    1. 局域网快速测试：电脑执行  python -m http.server 8000
+       （或 npx serve），手机与电脑连同一 WiFi，
+       微信打开 http://电脑IP:8000/wechat-fireworks.html 即可；
+    2. 正式分享：部署到任意公网静态托管（如 GitHub Pages、公司服务器），
+       把链接发到微信聊天/群/朋友圈，对方点开即玩。
+    ===== 作为背景特效嵌入其他页面的方法 =====
+    1. 复制本文件的 <style>、<canvas id="fireworks">、<script> 到你自己的页面；
+    2. canvas 是 position: fixed + z-index: 0，会自动垫在内容下方；
+    3. 内容层 z-index 大于 0 即可浮在烟花之上；
+    4. 若内容层需要响应点击，去掉它的 pointer-events: none，
+       此时烟花仍会自动燃放，只是无法手动点击发射。
+  -->
+  <style>
+    * { margin: 0; padding: 0; }
+
+    /* 移动端 + 微信兼容：防滚动、防缩放、防长按菜单 */
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden; background: #000;
+      position: fixed;               /* iOS 橡皮筋滚动 */
+      touch-action: none;            /* 禁止浏览器手势 */
+      overscroll-behavior: none;
+      -webkit-tap-highlight-color: transparent;  /* 去点击高亮 */
+      -webkit-touch-callout: none;   /* 禁长按弹出菜单 */
+      user-select: none; -webkit-user-select: none;
+    }
+
+    /* 烟花画布：铺满全屏，垫在最底层 */
+    #fireworks {
+      position: fixed; inset: 0; z-index: 0;
+      display: block;
+    }
+
+    /* 演示内容层：浮在烟花上方 */
+    .page {
+      position: fixed; inset: 0; z-index: 1;
+      display: flex; align-items: center; justify-content: center;
+      pointer-events: none; /* 让点击穿透到画布，便于手动燃放 */
+    }
+    .card {
+      padding: 24px 30px;
+      background: rgba(10, 12, 30, .55);
+      border: 1px solid rgba(255, 255, 255, .15);
+      border-radius: 12px;
+      backdrop-filter: blur(3px);
+      color: #fff; text-align: center;
+      font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    .card h1 { font-size: 22px; letter-spacing: 5px; margin-bottom: 10px; }
+    .card p  { font-size: 13px; line-height: 1.9; color: rgba(255, 255, 255, .75); }
+
+    /* 音效开关按钮（手机端加大触控面积） */
+    #soundBtn {
+      position: fixed; z-index: 2;
+      top: calc(12px + env(safe-area-inset-top));
+      right: calc(12px + env(safe-area-inset-right));
+      padding: 10px 18px; min-height: 40px;
+      cursor: pointer;
+      background: rgba(255, 255, 255, .12); color: #fff;
+      border: 1px solid rgba(255, 255, 255, .25); border-radius: 20px;
+      font: 13px "PingFang SC", "Microsoft YaHei", sans-serif; letter-spacing: 1px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #soundBtn:active { background: rgba(255, 255, 255, .28); }
+
+    .tip {
+      position: fixed; z-index: 2;
+      bottom: calc(14px + env(safe-area-inset-bottom));
+      left: 50%; transform: translateX(-50%);
+      width: 100%; text-align: center;
+      color: rgba(255, 255, 255, .55);
+      font: 13px/1.5 "PingFang SC", "Microsoft YaHei", sans-serif;
+      letter-spacing: 2px; pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="fireworks"></canvas>
+
+  <!-- 内容层：演示"烟花作为页面背景"的效果 -->
+  <div class="page">
+    <div class="card">
+      <h1>烟花背景特效</h1>
+      <p>这是一层普通页面内容，烟花在其下方绽放。</p>
+      <p>点击屏幕任意位置手动燃放。</p>
+    </div>
+  </div>
+
+  <button id="soundBtn">音效：开</button>
+  <div class="tip">点击屏幕绽放烟花</div>
+
+  <script>
+  (() => {
+    const canvas = document.getElementById('fireworks');
+    const ctx = canvas.getContext('2d');
+    let W, H;
+
+    // ---- 环境检测：微信 / 移动端 ----
+    const isWeChat = /MicroMessenger/i.test(navigator.userAgent);
+    const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+
+    // ---- 高清屏适配（限制 DPR 上限，保证手机性能）----
+    function resize() {
+      W = window.innerWidth;
+      H = window.innerHeight;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = W * dpr;
+      canvas.height = H * dpr;
+      canvas.style.width = W + 'px';
+      canvas.style.height = H + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    window.addEventListener('resize', resize);
+    window.addEventListener('orientationchange', resize);
+    resize();
+
+    // ---- 全局物理参数 ----
+    const GRAVITY = 0.035;   // 粒子重力
+    const FRICTION = 0.98;   // 空气阻力
+    const TRAIL = 0.20;      // 拖尾强度（越小拖尾越长）
+
+    // ---- 性能自适应：移动端减量，掉帧时自动再降 ----
+    let particleFactor = isMobile ? 0.6 : 1;
+    let frameSum = 0, frameCount = 0, lastTime = 0;
+    function tunePerformance(t) {
+      if (lastTime) {
+        frameSum += t - lastTime;
+        frameCount++;
+        if (frameCount >= 60) {          // 每约 1 秒评估一次
+          const avg = frameSum / frameCount;
+          if (avg > 26) {                // 平均帧耗时超 26ms 视为掉帧
+            particleFactor = Math.max(0.35, particleFactor - 0.1);
+          }
+          frameSum = 0; frameCount = 0;
+        }
+      }
+      lastTime = t;
+    }
+    const adj = n => Math.max(10, Math.floor(n * particleFactor));
+
+    // ---- 调色板 ----
+    const PALETTES = [
+      ['#ff6b6b', '#feca57', '#ff9ff3', '#54a0ff'],
+      ['#ff9f43', '#ffd32a', '#ff6b81', '#e056fd'],
+      ['#00d2d3', '#54a0ff', '#5f27cd', '#01a3a4'],
+      ['#ffcccc', '#ffab91', '#ffd54f', '#a5d6a7'],
+      ['#f8a5c2', '#f19066', '#74b9ff', '#a29bfe'],
+    ];
+    const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+    const rand = (min, max) => min + Math.random() * (max - min);
+
+    // ==================== 音效（Web Audio 合成，无需音频文件） ====================
+    let audioCtx = null;
+    let soundOn = true;
+
+    function initAudio() {
+      // 微信/移动端浏览器要求：AudioContext 必须在用户手势中创建或恢复
+      if (!audioCtx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (AC) audioCtx = new AC();
+      }
+      if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    }
+
+    // 发射音："咻"——白噪声经带通滤波，频率快速爬升
+    function playLaunchSound() {
+      if (!soundOn || !audioCtx) return;
+      const t0 = audioCtx.currentTime;
+      const dur = 0.5;
+      const bufferSize = Math.floor(audioCtx.sampleRate * dur);
+      const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 2);
+      }
+      const src = audioCtx.createBufferSource();
+      src.buffer = buffer;
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.Q.value = 2;
+      filter.frequency.setValueAtTime(300, t0);
+      filter.frequency.exponentialRampToValueAtTime(1800, t0 + dur);
+      const gain = audioCtx.createGain();
+      gain.gain.setValueAtTime(0.12, t0);
+      gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+      src.connect(filter).connect(gain).connect(audioCtx.destination);
+      src.start(t0);
+    }
+
+    // 爆炸音："轰"——噪声低频衰减 + 低频正弦下坠
+    function playExplodeSound() {
+      if (!soundOn || !audioCtx) return;
+      const t0 = audioCtx.currentTime;
+      const dur = 0.7;
+      const bufferSize = Math.floor(audioCtx.sampleRate * dur);
+      const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 2.5);
+      }
+      const src = audioCtx.createBufferSource();
+      src.buffer = buffer;
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(2500, t0);
+      filter.frequency.exponentialRampToValueAtTime(120, t0 + dur);
+      const gain = audioCtx.createGain();
+      gain.gain.setValueAtTime(0.5, t0);
+      gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+      src.connect(filter).connect(gain).connect(audioCtx.destination);
+      src.start(t0);
+      const osc = audioCtx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(150, t0);
+      osc.frequency.exponentialRampToValueAtTime(40, t0 + dur);
+      const og = audioCtx.createGain();
+      og.gain.setValueAtTime(0.4, t0);
+      og.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+      osc.connect(og).connect(audioCtx.destination);
+      osc.start(t0);
+      osc.stop(t0 + dur);
+    }
+
+    // ==================== 粒子与火箭 ====================
+    class Particle {
+      constructor(x, y, color, vx, vy, size, life) {
+        this.x = x; this.y = y;
+        this.vx = vx; this.vy = vy;
+        this.color = color;
+        this.size = size;
+        this.life = life;        // 剩余生命（帧）
+        this.maxLife = life;
+      }
+      update() {
+        this.vx *= FRICTION;
+        this.vy = this.vy * FRICTION + GRAVITY;
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life--;
+      }
+      draw() {
+        const alpha = Math.max(this.life / this.maxLife, 0);
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    class Rocket {
+      constructor(x, y, targetX, targetY) {
+        this.x = x; this.y = y;
+        this.targetX = targetX; this.targetY = targetY;
+        const dx = targetX - x, dy = targetY - y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const speed = rand(7, 10);
+        this.vx = dx / dist * speed;
+        this.vy = dy / dist * speed;
+        this.trail = [];        // 尾迹点
+      }
+      update() {
+        this.trail.push({ x: this.x, y: this.y });
+        if (this.trail.length > 9) this.trail.shift();
+        this.x += this.vx;
+        this.y += this.vy;
+      }
+      draw() {
+        this.trail.forEach((p, i) => {
+          ctx.globalAlpha = (i + 1) / this.trail.length * 0.8;
+          ctx.fillStyle = '#ffd166';
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 1.5, 0, Math.PI * 2);
+          ctx.fill();
+        });
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = '#fff6d5';
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, 2.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      exploded() {
+        return this.y <= this.targetY;
+      }
+    }
+
+    let particles = [];
+    let rockets = [];
+
+    // ==================== 爆炸图案 ====================
+    // 心形参数方程（Canvas 坐标 y 向下，故 y 取负使心尖朝下）
+    function heartPoint(t, scale) {
+      const x = 16 * Math.pow(Math.sin(t), 3);
+      const y = -(13 * Math.cos(t) - 5 * Math.cos(2 * t)
+                 - 2 * Math.cos(3 * t) - Math.cos(4 * t));
+      return { x: x * scale, y: y * scale };
+    }
+
+    // 环形：粒子从中心飞出，均匀分布在圆周上
+    function ringBurst(x, y, radius, color, count, size, life) {
+      for (let i = 0; i < count; i++) {
+        const angle = (i / count) * Math.PI * 2 + rand(-0.06, 0.06);
+        const speed = radius / 25 + rand(-0.4, 0.4);
+        particles.push(new Particle(
+          x, y, color,
+          Math.cos(angle) * speed, Math.sin(angle) * speed,
+          size, life
+        ));
+      }
+    }
+
+    // 中心高亮闪光粒子
+    function centerFlash(x, y) {
+      const count = adj(22);
+      for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = rand(0.2, 1.2);
+        particles.push(new Particle(
+          x, y, '#ffffff',
+          Math.cos(angle) * speed, Math.sin(angle) * speed,
+          rand(1, 2), rand(20, 40)
+        ));
+      }
+    }
+
+    // 带权随机选择图案
+    function pickShape() {
+      const r = Math.random();
+      if (r < 0.35) return 'sphere';      // 球形 35%
+      if (r < 0.50) return 'ring';        // 环形 15%
+      if (r < 0.60) return 'doubleRing';  // 双环 10%
+      if (r < 0.75) return 'heart';       // 心形 15%
+      if (r < 0.85) return 'star';        // 星形 10%
+      return 'willow';                    // 垂柳 15%
+    }
+
+    function explode(x, y) {
+      playExplodeSound();
+      const palette = pick(PALETTES);
+      const shape = pickShape();
+
+      switch (shape) {
+        case 'sphere': {  // 球形：各向均匀散射
+          const count = adj(Math.floor(rand(70, 110)));
+          for (let i = 0; i < count; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = rand(1, 5.5);
+            particles.push(new Particle(
+              x, y, pick(palette),
+              Math.cos(angle) * speed, Math.sin(angle) * speed,
+              rand(0.6, 2.4), rand(50, 90)
+            ));
+          }
+          break;
+        }
+        case 'ring': {  // 环形
+          const radius = rand(55, 85);
+          ringBurst(x, y, radius, pick(palette), adj(70), rand(1.2, 2.2), rand(60, 90));
+          break;
+        }
+        case 'doubleRing': {  // 双环：内外两个同心环
+          const r1 = rand(45, 60);
+          const r2 = r1 + rand(16, 24);
+          ringBurst(x, y, r1, pick(palette), adj(60), rand(1.2, 2.2), rand(60, 90));
+          ringBurst(x, y, r2, pick(palette), adj(45), rand(1.0, 1.8), rand(60, 90));
+          break;
+        }
+        case 'heart': {  // 心形：粒子飞向心形轮廓
+          const count = adj(90);
+          const scale = rand(3.8, 5.2);
+          for (let i = 0; i < count; i++) {
+            const t = (i / count) * Math.PI * 2;
+            const p = heartPoint(t, scale);
+            const dist = Math.hypot(p.x, p.y) || 1;
+            const speed = dist * 0.10 + rand(-0.3, 0.3);
+            particles.push(new Particle(
+              x, y, pick(palette),
+              p.x / dist * speed, p.y / dist * speed,
+              rand(1, 2.2), rand(70, 110)
+            ));
+          }
+          break;
+        }
+        case 'star': {  // 五角星：r = R·|cos(2.5θ)|^0.7
+          const count = adj(100);
+          const R = rand(55, 80);
+          for (let i = 0; i < count; i++) {
+            const t = (i / count) * Math.PI * 2;
+            const r = R * Math.pow(Math.abs(Math.cos(2.5 * t)), 0.7) + 2;
+            const px = Math.cos(t) * r, py = Math.sin(t) * r;
+            const dist = Math.hypot(px, py) || 1;
+            const speed = dist * 0.12;
+            particles.push(new Particle(
+              x, y, pick(palette),
+              px / dist * speed, py / dist * speed,
+              rand(1, 2), rand(60, 100)
+            ));
+          }
+          break;
+        }
+        case 'willow': {  // 垂柳：金黄色慢速粒子，长生命期，重力下拉成柳枝
+          const colors = ['#ffd166', '#ffe066', '#ffc94d', '#ffec99'];
+          const count = adj(90);
+          for (let i = 0; i < count; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = rand(1, 4.2);
+            particles.push(new Particle(
+              x, y, pick(colors),
+              Math.cos(angle) * speed, Math.sin(angle) * speed - 0.8,
+              rand(0.8, 1.8), rand(110, 150)
+            ));
+          }
+          break;
+        }
+      }
+      centerFlash(x, y);
+    }
+
+    // ---- 发射火箭 ----
+    function launchRocket(targetX, targetY) {
+      playLaunchSound();
+      const startX = targetX + rand(-80, 80);
+      rockets.push(new Rocket(startX, H + 10, targetX, targetY));
+    }
+
+    // ==================== 交互 ====================
+    // 定时自动发射（移动端间隔稍密，火箭上限防积压）
+    setInterval(() => {
+      if (rockets.length < 15) {
+        launchRocket(rand(W * 0.1, W * 0.9), rand(H * 0.15, H * 0.55));
+      }
+    }, isMobile ? 650 : 800);
+
+    // 触摸/点击发射；首次交互时初始化音频（微信/移动端自动播放限制）
+    canvas.addEventListener('pointerdown', e => {
+      initAudio();
+      launchRocket(e.clientX, e.clientY);
+    });
+
+    // 阻止微信/移动端浏览器的默认手势：滚动、双击缩放、长按菜单
+    document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+    document.addEventListener('gesturestart', e => e.preventDefault());
+    document.addEventListener('dblclick', e => e.preventDefault());
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+    // 音效开关按钮
+    const soundBtn = document.getElementById('soundBtn');
+    soundBtn.addEventListener('click', () => {
+      soundOn = !soundOn;
+      soundBtn.textContent = '音效：' + (soundOn ? '开' : '关');
+      if (soundOn) initAudio();
+    });
+    window.addEventListener('keydown', e => {
+      if (e.key.toLowerCase() === 'm') soundBtn.click();
+    });
+
+    // ==================== 主循环 ====================
+    function loop(t) {
+      tunePerformance(t);
+
+      // 半透明覆盖 → 制造拖尾效果
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = `rgba(8, 8, 28, ${TRAIL})`;
+      ctx.fillRect(0, 0, W, H);
+
+      // 叠加发光（additive blending）
+      ctx.globalCompositeOperation = 'lighter';
+
+      rockets.forEach(r => r.update());
+      particles.forEach(p => p.update());
+      rockets.forEach(r => r.draw());
+      particles.forEach(p => p.draw());
+
+      // 火箭引爆（倒序遍历便于删除）
+      for (let i = rockets.length - 1; i >= 0; i--) {
+        if (rockets[i].exploded()) {
+          const r = rockets[i];
+          explode(r.x, r.y);
+          rockets.splice(i, 1);
+        }
+      }
+      // 清理消亡粒子
+      particles = particles.filter(p => p.life > 0);
+
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+  })();
+  </script>
+</body>
+</html>
