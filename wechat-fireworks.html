@@ -14,9 +14,9 @@
     2. 正式分享：部署到任意公网静态托管（如 GitHub Pages、公司服务器），
        把链接发到微信聊天/群/朋友圈，对方点开即玩。
     ===== 作为背景特效嵌入其他页面的方法 =====
-    1. 复制本文件的 <style>、<canvas id="fireworks">、<script> 到你自己的页面；
-    2. canvas 是 position: fixed + z-index: 0，会自动垫在内容下方；
-    3. 内容层 z-index 大于 0 即可浮在烟花之上；
+    1. 复制本文件的 <style>、两个 <canvas>（bgCanvas 背景层 + fireworks 动画层）、<script> 到你自己的页面；
+    2. 两层 canvas 都是 position: fixed，背景层 z-index 0、动画层 z-index 1，会自动垫在内容下方；
+    3. 内容层 z-index 大于 1 即可浮在烟花之上；
     4. 若内容层需要响应点击，去掉它的 pointer-events: none，
        此时烟花仍会自动燃放，只是无法手动点击发射。
   -->
@@ -35,74 +35,117 @@
       user-select: none; -webkit-user-select: none;
     }
 
-    /* 烟花画布：铺满全屏，垫在最底层 */
-    #fireworks {
+    /* 背景画布：静态夜空（渐变、月亮、星星、城市剪影） */
+    #bgCanvas {
       position: fixed; inset: 0; z-index: 0;
       display: block;
     }
 
-    /* 演示内容层：浮在烟花上方 */
-    .page {
+    /* 名字装饰层：流光渐变字 + 光晕（位于背景之上、烟花之下） */
+    .name-tag {
+      position: fixed; top: 16%; left: 0; width: 100%;
+      text-align: center; z-index: 0;
+      pointer-events: none;
+      font-family: "STKaiti", "KaiTi", "PingFang SC", "Microsoft YaHei", serif;
+    }
+    .name-tag span {
+      display: inline-block;
+      font-size: clamp(30px, 7vw, 52px);
+      font-weight: 700;
+      letter-spacing: 0.3em;
+      padding-left: 0.3em;   /* 补偿最后字符的字距，保持视觉居中 */
+      background: linear-gradient(135deg, #ffd700, #ff7eb3, #9d7bff, #ffd700);
+      background-size: 300% 300%;
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      -webkit-text-fill-color: transparent;
+      animation: shine 5s linear infinite,
+                 float 4s ease-in-out infinite,
+                 breathe 3.5s ease-in-out infinite,
+                 appear 1.6s ease-out backwards;
+      filter: blur(0.8px)                /* 轻微虚化 */
+              drop-shadow(0 0 18px rgba(255, 190, 120, .65))
+              drop-shadow(0 0 40px rgba(255, 160, 200, .45));
+    }
+    .name-tag span::before, .name-tag span::after {
+      content: '';
+      display: inline-block;
+      width: 48px; height: 1px;
+      vertical-align: middle;
+      margin: 0 18px;
+      background:
+        linear-gradient(90deg, transparent, rgba(255, 215, 0, .45)),
+        radial-gradient(circle at 100% 50%, rgba(255, 235, 160, .9), transparent 55%);
+    }
+    .name-tag span::after {
+      background:
+        linear-gradient(90deg, rgba(255, 215, 0, .45), transparent),
+        radial-gradient(circle at 0% 50%, rgba(255, 235, 160, .9), transparent 55%);
+    }
+    /* 星光粒子：环绕名字闪烁 */
+    .name-tag i {
+      position: absolute;
+      width: 4px; height: 4px;
+      border-radius: 50%;
+      background: #ffe9a8;
+      box-shadow: 0 0 8px 3px rgba(255, 220, 130, .55);
+      animation: twinkle 3s ease-in-out infinite;
+      opacity: 0;
+    }
+    .name-tag i:nth-child(1) { left: 20%; top: 55%; }
+    .name-tag i:nth-child(2) { left: 28%; top: 78%; width: 3px; height: 3px; animation-delay: .5s; }
+    .name-tag i:nth-child(3) { left: 42%; top: 90%; width: 3px; height: 3px; animation-delay: 1s; }
+    .name-tag i:nth-child(4) { right: 20%; top: 55%; animation-delay: 1.5s; }
+    .name-tag i:nth-child(5) { right: 28%; top: 78%; width: 3px; height: 3px; animation-delay: 2s; }
+    .name-tag i:nth-child(6) { right: 42%; top: 90%; width: 3px; height: 3px; animation-delay: 2.5s; }
+    @keyframes twinkle {
+      0%, 100% { opacity: 0; transform: scale(.4); }
+      50% { opacity: .95; transform: scale(1.25); }
+    }
+    @keyframes breathe {
+      0%, 100% { opacity: .55; }
+      50% { opacity: .85; }
+    }
+    @keyframes appear {
+      from { opacity: 0; transform: translateY(24px) scale(.85); }
+      to   { opacity: .75; transform: translateY(0) scale(1); }
+    }
+
+    @keyframes shine {
+      0%, 100% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+    }
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-8px); }
+    }
+
+    /* 烟花画布：动画层，浮在背景上方 */
+    #fireworks {
       position: fixed; inset: 0; z-index: 1;
-      display: flex; align-items: center; justify-content: center;
-      pointer-events: none; /* 让点击穿透到画布，便于手动燃放 */
+      display: block;
     }
-    .card {
-      padding: 24px 30px;
-      background: rgba(10, 12, 30, .55);
-      border: 1px solid rgba(255, 255, 255, .15);
-      border-radius: 12px;
-      backdrop-filter: blur(3px);
-      color: #fff; text-align: center;
-      font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
-    }
-    .card h1 { font-size: 22px; letter-spacing: 5px; margin-bottom: 10px; }
-    .card p  { font-size: 13px; line-height: 1.9; color: rgba(255, 255, 255, .75); }
 
-    /* 音效开关按钮（手机端加大触控面积） */
-    #soundBtn {
-      position: fixed; z-index: 2;
-      top: calc(12px + env(safe-area-inset-top));
-      right: calc(12px + env(safe-area-inset-right));
-      padding: 10px 18px; min-height: 40px;
-      cursor: pointer;
-      background: rgba(255, 255, 255, .12); color: #fff;
-      border: 1px solid rgba(255, 255, 255, .25); border-radius: 20px;
-      font: 13px "PingFang SC", "Microsoft YaHei", sans-serif; letter-spacing: 1px;
-      -webkit-tap-highlight-color: transparent;
-    }
-    #soundBtn:active { background: rgba(255, 255, 255, .28); }
-
-    .tip {
-      position: fixed; z-index: 2;
-      bottom: calc(14px + env(safe-area-inset-bottom));
-      left: 50%; transform: translateX(-50%);
-      width: 100%; text-align: center;
-      color: rgba(255, 255, 255, .55);
-      font: 13px/1.5 "PingFang SC", "Microsoft YaHei", sans-serif;
-      letter-spacing: 2px; pointer-events: none;
-    }
   </style>
 </head>
 <body>
-  <canvas id="fireworks"></canvas>
+  <canvas id="bgCanvas"></canvas>
 
-  <!-- 内容层：演示"烟花作为页面背景"的效果 -->
-  <div class="page">
-    <div class="card">
-      <h1>烟花背景特效</h1>
-      <p>这是一层普通页面内容，烟花在其下方绽放。</p>
-      <p>点击屏幕任意位置手动燃放。</p>
-    </div>
+  <!-- 背景名字：流光渐变 + 浮动光晕（位于烟花之下） -->
+  <div class="name-tag">
+    <i></i><i></i><i></i><i></i><i></i><i></i>
+    <span>王玉铭</span>
   </div>
 
-  <button id="soundBtn">音效：开</button>
-  <div class="tip">点击屏幕绽放烟花</div>
+  <canvas id="fireworks"></canvas>
 
   <script>
   (() => {
     const canvas = document.getElementById('fireworks');
     const ctx = canvas.getContext('2d');
+    const bgCanvas = document.getElementById('bgCanvas');
+    const bgCtx = bgCanvas.getContext('2d');
     let W, H;
 
     // ---- 环境检测：微信 / 移动端 ----
@@ -114,15 +157,163 @@
       W = window.innerWidth;
       H = window.innerHeight;
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      canvas.width = W * dpr;
-      canvas.height = H * dpr;
-      canvas.style.width = W + 'px';
-      canvas.style.height = H + 'px';
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      [canvas, bgCanvas].forEach(cv => {
+        cv.width = W * dpr;
+        cv.height = H * dpr;
+        cv.style.width = W + 'px';
+        cv.style.height = H + 'px';
+        cv.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+      });
+      buildStars();
+      buildStaticBg();
     }
     window.addEventListener('resize', resize);
     window.addEventListener('orientationchange', resize);
-    resize();
+
+    // ==================== 背景层：夜空 + 月亮 + 星星 + 城市剪影 + 流星 ====================
+    const staticBg = document.createElement('canvas');  // 离屏静态背景
+    let stars = [];        // 闪烁的星星
+    let bgFrame = 0;       // 背景帧计数（驱动星星闪烁）
+    let meteor = null;     // 流星
+
+    function buildStars() {
+      stars = [];
+      const count = Math.floor(W * H / 9000);   // 按屏幕面积自适应数量
+      for (let i = 0; i < count; i++) {
+        stars.push({
+          x: Math.random() * W,
+          y: Math.random() * H * 0.7,           // 星星集中在上方天空
+          r: 0.3 + Math.random(),
+          phase: Math.random() * Math.PI * 2,
+          speed: 0.02 + Math.random() * 0.04,
+          base: 0.35 + Math.random() * 0.6
+        });
+      }
+    }
+
+    function buildStaticBg() {
+      const rr = (a, b) => a + Math.random() * (b - a);
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      staticBg.width = Math.floor(W * dpr);
+      staticBg.height = Math.floor(H * dpr);
+      const s = staticBg.getContext('2d');
+      s.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      // 夜空渐变：深蓝 → 紫
+      const grad = s.createLinearGradient(0, 0, 0, H);
+      grad.addColorStop(0, '#070720');
+      grad.addColorStop(0.45, '#101038');
+      grad.addColorStop(0.8, '#251550');
+      grad.addColorStop(1, '#180f30');
+      s.fillStyle = grad;
+      s.fillRect(0, 0, W, H);
+
+      // 月亮与光晕
+      const mx = W * 0.78, my = H * 0.16;
+      const mr = Math.min(W, H) * 0.06;
+      const glow = s.createRadialGradient(mx, my, mr * 0.2, mx, my, mr * 7);
+      glow.addColorStop(0, 'rgba(255, 248, 210, 0.4)');
+      glow.addColorStop(0.4, 'rgba(255, 248, 210, 0.08)');
+      glow.addColorStop(1, 'rgba(255, 248, 210, 0)');
+      s.fillStyle = glow;
+      s.beginPath();
+      s.arc(mx, my, mr * 7, 0, Math.PI * 2);
+      s.fill();
+      s.fillStyle = '#fff8e0';
+      s.beginPath();
+      s.arc(mx, my, mr, 0, Math.PI * 2);
+      s.fill();
+      s.fillStyle = 'rgba(220, 208, 155, 0.35)';   // 月面暗斑
+      [[-0.3, -0.2, 0.25], [0.2, 0.3, 0.2], [0.05, -0.45, 0.15]].forEach(([dx, dy, r]) => {
+        s.beginPath();
+        s.arc(mx + dx * mr, my + dy * mr, r * mr, 0, Math.PI * 2);
+        s.fill();
+      });
+
+      // 远山剪影（淡）
+      s.fillStyle = 'rgba(26, 20, 55, 0.9)';
+      let x = -30;
+      while (x < W + 30) {
+        const w = rr(60, 140), h = rr(H * 0.06, H * 0.14);
+        s.beginPath();
+        s.moveTo(x, H);
+        s.lineTo(x + w * 0.5, H - h);
+        s.lineTo(x + w, H);
+        s.closePath();
+        s.fill();
+        x += w - rr(10, 40);
+      }
+
+      // 城市剪影（近层，更暗）
+      const horizon = H * 0.86;
+      s.fillStyle = 'rgba(12, 9, 30, 0.95)';
+      x = -20;
+      while (x < W + 20) {
+        const bw = rr(35, 85);
+        const bh = rr(H * 0.05, H * 0.15);
+        s.fillRect(x, horizon - bh, bw, bh);
+        if (Math.random() < 0.3) {              // 楼顶天线
+          s.fillRect(x + bw * 0.4, horizon - bh - rr(8, 22), 1.5, rr(8, 22));
+        }
+        x += bw + rr(2, 12);
+      }
+      s.fillRect(0, horizon, W, H - horizon);
+      for (let i = 0; i < 70; i++) {            // 窗户灯光
+        const wx = Math.random() * W;
+        const wy = horizon - Math.random() * H * 0.14;
+        s.fillStyle = `rgba(255, 205, 110, ${rr(0.12, 0.55)})`;
+        s.fillRect(wx, wy, 1.6, 2.2);
+      }
+    }
+
+    function drawStars() {
+      bgCtx.clearRect(0, 0, W, H);
+      bgCtx.drawImage(staticBg, 0, 0, W, H);
+      for (const st of stars) {
+        const tw = st.base * (0.55 + 0.45 * Math.sin(bgFrame * st.speed + st.phase));
+        bgCtx.globalAlpha = Math.max(0.15, tw);
+        bgCtx.fillStyle = '#ffffff';
+        bgCtx.beginPath();
+        bgCtx.arc(st.x, st.y, st.r, 0, Math.PI * 2);
+        bgCtx.fill();
+      }
+      bgCtx.globalAlpha = 1;
+      maybeMeteor();
+      bgFrame++;
+    }
+
+    function maybeMeteor() {
+      if (!meteor && Math.random() < 0.01) {
+        meteor = {
+          x: W * (0.15 + Math.random() * 0.7),
+          y: Math.random() * H * 0.15,
+          vx: 4 + Math.random() * 3,
+          vy: 2 + Math.random() * 1.5,
+          life: 0
+        };
+      }
+      if (meteor) {
+        meteor.x += meteor.vx;
+        meteor.y += meteor.vy;
+        meteor.life++;
+        const tail = 14;
+        const fade = Math.max(0, 1 - meteor.life / 70);
+        for (let i = tail; i >= 0; i--) {
+          bgCtx.globalAlpha = (1 - i / tail) * 0.55 * fade;
+          bgCtx.fillStyle = '#dbe9ff';
+          bgCtx.beginPath();
+          bgCtx.arc(
+            meteor.x - meteor.vx * i * 0.6,
+            meteor.y - meteor.vy * i * 0.6,
+            i === 0 ? 1.6 : 1, 0, Math.PI * 2
+          );
+          bgCtx.fill();
+        }
+        bgCtx.globalAlpha = 1;
+        if (meteor.life > 70 || meteor.y > H || meteor.x > W) meteor = null;
+      }
+    }
+    resize();   // 背景层变量声明完成后，再初始化画布与背景
 
     // ---- 全局物理参数 ----
     const GRAVITY = 0.035;   // 粒子重力
@@ -161,7 +352,6 @@
 
     // ==================== 音效（Web Audio 合成，无需音频文件） ====================
     let audioCtx = null;
-    let soundOn = true;
 
     function initAudio() {
       // 微信/移动端浏览器要求：AudioContext 必须在用户手势中创建或恢复
@@ -174,7 +364,7 @@
 
     // 发射音："咻"——白噪声经带通滤波，频率快速爬升
     function playLaunchSound() {
-      if (!soundOn || !audioCtx) return;
+      if (!audioCtx) return;
       const t0 = audioCtx.currentTime;
       const dur = 0.5;
       const bufferSize = Math.floor(audioCtx.sampleRate * dur);
@@ -199,7 +389,7 @@
 
     // 爆炸音："轰"——噪声低频衰减 + 低频正弦下坠
     function playExplodeSound() {
-      if (!soundOn || !audioCtx) return;
+      if (!audioCtx) return;
       const t0 = audioCtx.currentTime;
       const dur = 0.7;
       const bufferSize = Math.floor(audioCtx.sampleRate * dur);
@@ -233,17 +423,18 @@
 
     // ==================== 粒子与火箭 ====================
     class Particle {
-      constructor(x, y, color, vx, vy, size, life) {
+      constructor(x, y, color, vx, vy, size, life, gravityScale = 1) {
         this.x = x; this.y = y;
         this.vx = vx; this.vy = vy;
         this.color = color;
         this.size = size;
         this.life = life;        // 剩余生命（帧）
         this.maxLife = life;
+        this.gravityScale = gravityScale;  // 重力系数（图案专用）
       }
       update() {
         this.vx *= FRICTION;
-        this.vy = this.vy * FRICTION + GRAVITY;
+        this.vy = this.vy * FRICTION + GRAVITY * this.gravityScale;
         this.x += this.vx;
         this.y += this.vy;
         this.life--;
@@ -333,15 +524,32 @@
       }
     }
 
-    // 带权随机选择图案
+    // 粒子从中心飞向指定目标偏移点（用于绘制图案轮廓）
+    function burstTo(x, y, px, py, color, size, life, gravityScale = 1) {
+      const dist = Math.hypot(px, py) || 1;
+      const speed = dist * 0.10 + rand(-0.25, 0.25);
+      particles.push(new Particle(
+        x, y, color,
+        px / dist * speed, py / dist * speed,
+        size, life, gravityScale
+      ));
+    }
+
+    // 带权随机选择图案（共 12 种）
     function pickShape() {
       const r = Math.random();
-      if (r < 0.35) return 'sphere';      // 球形 35%
-      if (r < 0.50) return 'ring';        // 环形 15%
-      if (r < 0.60) return 'doubleRing';  // 双环 10%
-      if (r < 0.75) return 'heart';       // 心形 15%
-      if (r < 0.85) return 'star';        // 星形 10%
-      return 'willow';                    // 垂柳 15%
+      if (r < 0.20) return 'sphere';      // 球形 20%
+      if (r < 0.28) return 'ring';        // 环形 8%
+      if (r < 0.35) return 'doubleRing';  // 双环 7%
+      if (r < 0.45) return 'heart';       // 心形 10%
+      if (r < 0.52) return 'star';        // 星形 7%
+      if (r < 0.61) return 'willow';      // 垂柳 9%
+      if (r < 0.67) return 'smiley';      // 笑脸 6%
+      if (r < 0.74) return 'spiral';      // 螺旋 7%
+      if (r < 0.81) return 'pinwheel';    // 风车 7%
+      if (r < 0.88) return 'flower';      // 花朵 7%
+      if (r < 0.94) return 'cross';       // 星芒 6%
+      return 'fountain';                  // 喷泉 6%
     }
 
     function explode(x, y) {
@@ -422,6 +630,100 @@
           }
           break;
         }
+        case 'smiley': {  // 笑脸：圆脸 + 双眼 + 微笑嘴弧
+          const R = rand(45, 65);
+          const color = pick(palette);
+          for (let i = 0; i < 56; i++) {
+            const a = (i / 56) * Math.PI * 2;
+            burstTo(x, y, Math.cos(a) * R, Math.sin(a) * R, color, 1.5, 90, 0.15);
+          }
+          for (let eye = 0; eye < 2; eye++) {
+            const ex = (eye === 0 ? -1 : 1) * R * 0.35;
+            for (let i = 0; i < 10; i++) {
+              const a = rand(0, Math.PI * 2), r = rand(0, 5);
+              burstTo(x, y, ex + Math.cos(a) * r, -R * 0.35 + Math.sin(a) * r,
+                      '#ffffff', 1.4, 70, 0.1);
+            }
+          }
+          for (let i = 0; i < 22; i++) {
+            const a = Math.PI * 1.25 + (i / 21) * Math.PI * 0.5;
+            burstTo(x, y, Math.cos(a) * R * 0.55, Math.sin(a) * R * 0.55,
+                    color, 1.5, 90, 0.15);
+          }
+          break;
+        }
+        case 'spiral': {  // 双臂螺旋：旋转展开
+          const count = adj(80);
+          const R = rand(60, 90);
+          for (let i = 0; i < count; i++) {
+            const arm = i % 2;
+            const t = i / count;
+            const a = t * Math.PI * 4 + arm * Math.PI;
+            burstTo(x, y, Math.cos(a) * R * t, Math.sin(a) * R * t,
+                    pick(palette), 1.4, 85, 0.2);
+          }
+          break;
+        }
+        case 'pinwheel': {  // 风车：粒子从中心切向旋出
+          const count = adj(64);
+          for (let i = 0; i < count; i++) {
+            const a = (i / count) * Math.PI * 2;
+            const dir = a + Math.PI / 2;
+            const speed = rand(2, 4.5);
+            particles.push(new Particle(
+              x, y, pick(palette),
+              Math.cos(dir) * speed, Math.sin(dir) * speed,
+              rand(1.2, 2), rand(60, 80), 0.3
+            ));
+          }
+          break;
+        }
+        case 'flower': {  // 花朵：一圈花瓣小环 + 金色花心
+          const petals = 6;
+          const petalR = rand(11, 15);
+          const centerR = rand(26, 34);
+          for (let p = 0; p < petals; p++) {
+            const ca = (p / petals) * Math.PI * 2;
+            const cx = Math.cos(ca) * centerR, cy = Math.sin(ca) * centerR;
+            for (let i = 0; i < 12; i++) {
+              const a = (i / 12) * Math.PI * 2;
+              burstTo(x, y, cx + Math.cos(a) * petalR, cy + Math.sin(a) * petalR,
+                      pick(palette), 1.4, 85, 0.2);
+            }
+          }
+          for (let i = 0; i < 16; i++) {
+            const a = rand(0, Math.PI * 2), r = rand(0, 9);
+            burstTo(x, y, Math.cos(a) * r, Math.sin(a) * r, '#ffd166', 1.5, 70, 0.15);
+          }
+          break;
+        }
+        case 'cross': {  // 星芒：8 向射线
+          const dirs = 8;
+          const len = rand(55, 85);
+          for (let d = 0; d < dirs; d++) {
+            const a = (d / dirs) * Math.PI * 2;
+            for (let i = 0; i < 9; i++) {
+              const r = len * ((i + 1) / 9) + rand(-2, 2);
+              burstTo(x, y, Math.cos(a) * r, Math.sin(a) * r,
+                      pick(palette), 1.5, 75, 0.25);
+            }
+          }
+          break;
+        }
+        case 'fountain': {  // 喷泉：金色粒子向上喷，重力下拉回落
+          const colors = ['#ffd166', '#ffe066', '#ffc94d'];
+          const count = adj(70);
+          for (let i = 0; i < count; i++) {
+            const a = rand(-0.28, 0.28) - Math.PI / 2;
+            const speed = rand(4, 8);
+            particles.push(new Particle(
+              x, y, pick(colors),
+              Math.cos(a) * speed, Math.sin(a) * speed,
+              rand(1, 2), rand(60, 100)
+            ));
+          }
+          break;
+        }
       }
       centerFlash(x, y);
     }
@@ -453,25 +755,17 @@
     document.addEventListener('dblclick', e => e.preventDefault());
     canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-    // 音效开关按钮
-    const soundBtn = document.getElementById('soundBtn');
-    soundBtn.addEventListener('click', () => {
-      soundOn = !soundOn;
-      soundBtn.textContent = '音效：' + (soundOn ? '开' : '关');
-      if (soundOn) initAudio();
-    });
-    window.addEventListener('keydown', e => {
-      if (e.key.toLowerCase() === 'm') soundBtn.click();
-    });
 
     // ==================== 主循环 ====================
     function loop(t) {
       tunePerformance(t);
 
-      // 半透明覆盖 → 制造拖尾效果
-      ctx.globalCompositeOperation = 'source-over';
+      drawStars();   // 背景层重绘：星星闪烁 + 流星
+
+      // 烟花层：destination-out 淡出旧帧（保持透明，透出背景层）
+      ctx.globalCompositeOperation = 'destination-out';
       ctx.globalAlpha = 1;
-      ctx.fillStyle = `rgba(8, 8, 28, ${TRAIL})`;
+      ctx.fillStyle = `rgba(0, 0, 0, ${TRAIL})`;
       ctx.fillRect(0, 0, W, H);
 
       // 叠加发光（additive blending）
